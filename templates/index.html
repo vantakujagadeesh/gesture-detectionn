@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SignAI | Advanced Gesture Chat</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Monaco&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Left Panel: Video & Controls -->
+        <div class="video-panel">
+            <div class="video-wrapper">
+                <div class="live-indicator">
+                    <div class="live-dot"></div> LIVE
+                </div>
+                <img src="{{ url_for('video_feed') }}" class="video-feed" alt="Video Feed">
+            </div>
+
+            <div class="controls-panel">
+                <div class="control-card">
+                    <span class="control-label">Operation Mode</span>
+                    <select id="mode-select">
+                        <option value="sign_language">Dynamic Sign Language</option>
+                        <option value="chat_gesture">Static Chat Gestures</option>
+                        <option value="alphabet_mode" selected>Alphabet Mode (A-Z)</option>
+                    </select>
+                </div>
+                
+                <div class="control-card">
+                    <span class="control-label">Language / Output</span>
+                    <select id="language-select">
+                        <option value="ASL">ASL (English)</option>
+                        <option value="BSL">BSL (English)</option>
+                    </select>
+                </div>
+
+                <div class="control-card">
+                    <span class="control-label">Audio Feedback</span>
+                    <button id="tts-btn" class="btn-accent">Enable TTS</button>
+                </div>
+
+                <div class="control-card">
+                    <span class="control-label">AI Confidence</span>
+                    <div class="status-value" id="conf-val">0.00</div>
+                </div>
+
+                <div class="control-card">
+                    <span class="control-label">Voice Output</span>
+                    <button id="speak-btn" class="btn-speak">🔊 Speak Text</button>
+                </div>
+
+                <div class="control-card">
+                    <span class="control-label">Reset</span>
+                    <button id="clear-btn" class="btn-clear">🗑 Clear Text</button>
+                </div>
+            </div>
+
+            <!-- Formed Text Display -->
+            <div class="formed-text-display" id="formed-text">
+                Waiting for gestures...
+            </div>
+            <div class="buffer-display" id="buffer-text">Buffer: </div>
+        </div>
+
+        <!-- Right Panel: Chat Interface -->
+        <div class="chat-panel">
+            <div class="chat-header">
+                <div class="chat-title">
+                    <span>👋</span> SignAI Chat
+                </div>
+                <div style="font-size: 0.8em; color: #888;">Online</div>
+            </div>
+
+            <div class="chat-history" id="chat-history">
+                <div class="message msg-system">
+                    <strong>Welcome to SignAI!</strong><br>
+                    Switch modes to use Dynamic Signs, Static Chat Gestures, or Alphabet Mode (A-Z with SPACE &amp; DELETE).<br>
+                    <em>🤚 SPACE = Open flat palm &nbsp;|&nbsp; 👍 DELETE = Thumbs up</em>
+                </div>
+            </div>
+
+            <div class="chat-footer">
+                <div class="gesture-bar">
+                    <div class="detected-label">
+                        Detected: <span id="detected-gesture" class="detected-value">Waiting...</span>
+                    </div>
+                    <button id="insert-gesture-btn" class="btn-small">Insert</button>
+                </div>
+
+                <div class="input-group">
+                    <input type="text" id="chat-input" placeholder="Type a message or use gestures...">
+                    <button id="send-btn" class="btn-accent">Send</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const chatHistory = document.getElementById('chat-history');
+        const chatInput = document.getElementById('chat-input');
+        const detectedGestureSpan = document.getElementById('detected-gesture');
+        const formedTextDiv = document.getElementById('formed-text');
+        const bufferTextDiv = document.getElementById('buffer-text');
+
+        // Track last spoken text to avoid repeating
+        let lastSpokenText = '';
+        let ttsAutoEnabled = false;
+
+        // Poll Status
+        setInterval(() => {
+            fetch('/status')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('conf-val').innerText = data.confidence;
+                    
+                    if(data.mode === 'chat_gesture') {
+                         detectedGestureSpan.innerText = data.prediction;
+                         formedTextDiv.innerText = data.sentence || 'Waiting for gestures...';
+                         bufferTextDiv.innerText = '';
+                    } else if(data.mode === 'alphabet_mode') {
+                        detectedGestureSpan.innerText = data.prediction;
+                        formedTextDiv.innerText = data.sentence || 'Waiting for gestures...';
+                        bufferTextDiv.innerText = 'Buffer: ' + (data.buffer || '');
+                    } else {
+                        detectedGestureSpan.innerText = data.sentence || "...";
+                        formedTextDiv.innerText = data.sentence || 'Waiting for gestures...';
+                        bufferTextDiv.innerText = '';
+                    }
+
+                    // Auto-speak when TTS is enabled and new text is formed
+                    if (ttsAutoEnabled && data.sentence && data.sentence !== lastSpokenText && data.sentence.length > 0) {
+                        // Only auto-speak when a word is committed (sentence changes)
+                        speakText(data.sentence);
+                        lastSpokenText = data.sentence;
+                    }
+                })
+                .catch(err => console.error("Status fetch failed", err));
+        }, 300);
+
+        // Speak text using browser SpeechSynthesis API
+        function speakText(text) {
+            if (!text || text === 'Waiting for gestures...') return;
+            
+            // Cancel any ongoing speech
+            window.speechSynthesis.cancel();
+            
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.rate = 0.9;
+            utterance.pitch = 1.0;
+            utterance.volume = 1.0;
+            utterance.lang = 'en-US';
+            window.speechSynthesis.speak(utterance);
+        }
+
+        // Send Message
+        function sendMessage(text) {
+            if (!text) return;
+            
+            fetch('/send_chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: text })
+            })
+            .then(response => response.json())
+            .then(data => {
+                renderChat(data.history);
+                chatInput.value = '';
+            });
+        }
+
+        // Render Chat
+        function renderChat(history) {
+            chatHistory.innerHTML = ''; // Clear
+            history.forEach(msg => {
+                const div = document.createElement('div');
+                div.className = `message ${msg.sender === 'User' ? 'msg-user' : 'msg-system'}`;
+                div.innerHTML = msg.text;
+                chatHistory.appendChild(div);
+            });
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+        }
+
+        // Event Listeners
+        document.getElementById('send-btn').addEventListener('click', () => {
+            sendMessage(chatInput.value);
+        });
+
+        document.getElementById('chat-input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage(chatInput.value);
+        });
+
+        document.getElementById('insert-gesture-btn').addEventListener('click', () => {
+            const gesture = detectedGestureSpan.innerText;
+            if (gesture && gesture !== 'Waiting...' && gesture !== '...' && gesture !== 'No hand detected') {
+                chatInput.value += gesture + " ";
+                chatInput.focus();
+            }
+        });
+
+        // Speak button — reads the formed text aloud
+        document.getElementById('speak-btn').addEventListener('click', () => {
+            const text = formedTextDiv.innerText;
+            speakText(text);
+        });
+
+        // Clear button — resets formed text
+        document.getElementById('clear-btn').addEventListener('click', () => {
+            fetch('/clear_text', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    formedTextDiv.innerText = 'Waiting for gestures...';
+                    bufferTextDiv.innerText = 'Buffer: ';
+                    lastSpokenText = '';
+                });
+        });
+
+        // Settings Updates
+        function updateSettings() {
+            const mode = document.getElementById('mode-select').value;
+            const lang = document.getElementById('language-select').value;
+            
+            fetch('/update_settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ operation_mode: mode, language: lang })
+            });
+
+            // Clear text when switching modes
+            fetch('/clear_text', { method: 'POST' });
+        }
+
+        document.getElementById('mode-select').addEventListener('change', updateSettings);
+        document.getElementById('language-select').addEventListener('change', updateSettings);
+        
+        document.getElementById('tts-btn').addEventListener('click', function() {
+            fetch('/toggle_tts', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    ttsAutoEnabled = data.tts_enabled;
+                    this.innerText = data.tts_enabled ? "Disable TTS" : "Enable TTS";
+                    this.style.background = data.tts_enabled ? "#cc3300" : "#007bff";
+                });
+        });
+    </script>
+</body>
+</html>

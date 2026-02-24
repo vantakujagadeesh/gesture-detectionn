@@ -1,0 +1,10 @@
+flask
+opencv-python
+mediapipe
+tensorflow
+numpy
+scikit-learn
+nltk
+pyttsx3
+matplotlib
+seaborn
